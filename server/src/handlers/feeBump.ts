@@ -1,6 +1,7 @@
-import { Request, Response } from "express";
+import { Request, Response, NextFunction } from "express";
 import StellarSdk from "@stellar/stellar-sdk";
 import { Config } from "../config";
+import { AppError } from "../errors/AppError";
 
 import { FeeBumpSchema, FeeBumpRequest } from "../schemas/feeBump";
 
@@ -13,18 +14,24 @@ interface FeeBumpResponse {
 export function feeBumpHandler(
   req: Request,
   res: Response,
+  next: NextFunction,
   config: Config
 ): void {
   try {
     const result = FeeBumpSchema.safeParse(req.body);
 
     if (!result.success) {
-      console.warn("Validation failed for fee-bump request:", result.error.format());
-      res.status(400).json({
-        error: "Validation failed",
-        details: result.error.format(),
-      });
-      return;
+      console.warn(
+        "Validation failed for fee-bump request:",
+        result.error.format()
+      );
+      return next(
+        new AppError(
+          `Validation failed: ${JSON.stringify(result.error.format())}`,
+          400,
+          "INVALID_XDR"
+        )
+      );
     }
 
     const body: FeeBumpRequest = result.data;
@@ -39,25 +46,30 @@ export function feeBumpHandler(
       );
     } catch (error: any) {
       console.error("Failed to parse XDR:", error.message);
-      res.status(400).json({
-        error: `Invalid XDR: ${error.message}`,
-      });
-      return;
+      return next(
+        new AppError(`Invalid XDR: ${error.message}`, 400, "INVALID_XDR")
+      );
     }
 
     // Verify inner transaction is signed
     if (innerTransaction.signatures.length === 0) {
-      res.status(400).json({
-        error: "Inner transaction must be signed before fee-bumping",
-      });
-      return;
+      return next(
+        new AppError(
+          "Inner transaction must be signed before fee-bumping",
+          400,
+          "UNSIGNED_TRANSACTION"
+        )
+      );
     }
 
-    if ('feeBumpTransaction' in innerTransaction) {
-      res.status(400).json({
-        error: "Cannot fee-bump an already fee-bumped transaction",
-      });
-      return;
+    if ("feeBumpTransaction" in innerTransaction) {
+      return next(
+        new AppError(
+          "Cannot fee-bump an already fee-bumped transaction",
+          400,
+          "ALREADY_FEE_BUMPED"
+        )
+      );
     }
 
     const feeAmount = Math.floor(config.baseFee * config.feeMultiplier);
@@ -96,11 +108,13 @@ export function feeBumpHandler(
         })
         .catch((error: any) => {
           console.error("Transaction submission failed:", error);
-          res.status(500).json({
-            error: `Transaction submission failed: ${error.message}`,
-            xdr: feeBumpXdr,
-            status: "ready",
-          });
+          next(
+            new AppError(
+              `Transaction submission failed: ${error.message}`,
+              500,
+              "SUBMISSION_FAILED"
+            )
+          );
         });
     } else {
       const response: FeeBumpResponse = {
@@ -111,8 +125,6 @@ export function feeBumpHandler(
     }
   } catch (error: any) {
     console.error("Error processing fee-bump request:", error);
-    res.status(500).json({
-      error: `Internal server error: ${error.message}`,
-    });
+    next(error);
   }
 }

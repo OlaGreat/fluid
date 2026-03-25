@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import { AppError } from "../errors/AppError";
 
 export interface ApiKeyConfig {
   key: string;
@@ -58,20 +59,19 @@ export function apiKeyMiddleware(
   const apiKey = getApiKeyFromHeader(req);
 
   if (!apiKey) {
-    res.status(401).json({
-      error:
+    return next(
+      new AppError(
         "Missing API key. Provide a valid x-api-key header to access this endpoint.",
-    });
-    return;
+        401,
+        "AUTH_FAILED"
+      )
+    );
   }
 
   const apiKeyConfig = API_KEYS.get(apiKey);
 
   if (!apiKeyConfig) {
-    res.status(403).json({
-      error: "Invalid API key.",
-    });
-    return;
+    return next(new AppError("Invalid API key.", 403, "AUTH_FAILED"));
   }
 
   res.locals.apiKey = apiKeyConfig;
