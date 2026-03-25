@@ -12,6 +12,8 @@ export interface Config {
   feeMultiplier: number;
   networkPassphrase: string;
   horizonUrl?: string;
+  maxXdrSize: number;
+  maxOperations: number;
 }
 
 export function loadConfig(): Config {
@@ -21,7 +23,10 @@ export function loadConfig(): Config {
   }
 
   // Support comma-separated list of secrets
-  const secrets = rawSecrets.split(",").map((s) => s.trim()).filter(Boolean);
+  const secrets = rawSecrets
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
   if (secrets.length === 0) {
     throw new Error("FLUID_FEE_PAYER_SECRET must contain at least one secret");
   }
@@ -42,12 +47,18 @@ export function loadConfig(): Config {
     "Test SDF Network ; September 2015";
   const horizonUrl = process.env.STELLAR_HORIZON_URL;
 
+  // Safety limits to prevent DoS attacks
+  const maxXdrSize = parseInt(process.env.FLUID_MAX_XDR_SIZE || "10240", 10); // Default: 10KB
+  const maxOperations = parseInt(process.env.FLUID_MAX_OPERATIONS || "100", 10); // Default: 100 operations
+
   return {
     feePayerAccounts,
     baseFee,
     feeMultiplier,
     networkPassphrase,
     horizonUrl,
+    maxXdrSize,
+    maxOperations,
   };
 }
 

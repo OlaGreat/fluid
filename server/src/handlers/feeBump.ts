@@ -1,16 +1,13 @@
 import StellarSdk from "@stellar/stellar-sdk";
 import { NextFunction, Request, Response } from "express";
-import { Config } from "../config";
-import { AppError } from "../errors/AppError";
 import { Config, pickFeePayerAccount } from "../config";
+import { AppError } from "../errors/AppError";
 import { ApiKeyConfig } from "../middleware/apiKeys";
 import { syncTenantFromApiKey } from "../models/tenantStore";
 import { recordSponsoredTransaction } from "../models/transactionLedger";
 import { FeeBumpRequest, FeeBumpSchema } from "../schemas/feeBump";
 import { checkTenantDailyQuota } from "../services/quota";
 import { transactionStore } from "../workers/transactionStore";
-
-import { AppError } from "../errors/AppError";
 import { calculateFeeBumpFee } from "../utils/feeCalculator";
 
 interface FeeBumpResponse {
@@ -46,7 +43,22 @@ export async function feeBumpHandler(
     const body: FeeBumpRequest = req.body;
     if (!body.xdr) {
       return next(
-        new AppError("Missing 'xdr' field in request body", 400, "INVALID_XDR")
+        new AppError("Missing 'xdr' field in request body", 400, "INVALID_XDR"),
+      );
+    }
+
+    // Safety check: Reject XDR payloads exceeding the size limit (DoS protection)
+    const xdrSize = body.xdr.length;
+    if (xdrSize > config.maxXdrSize) {
+      console.warn(
+        `XDR payload too large: ${xdrSize} bytes (max: ${config.maxXdrSize})`,
+      );
+      return next(
+        new AppError(
+          `XDR payload exceeds maximum allowed size of ${config.maxXdrSize} characters`,
+          413,
+          "PAYLOAD_TOO_LARGE",
+        ),
       );
     }
 
@@ -67,6 +79,21 @@ export async function feeBumpHandler(
       console.error("Failed to parse XDR:", error.message);
       return next(
         new AppError(`Invalid XDR: ${error.message}`, 400, "INVALID_XDR"),
+      );
+    }
+
+    // Safety check: Reject transactions with too many operations (DoS protection)
+    const operationCount = innerTransaction.operations?.length || 0;
+    if (operationCount > config.maxOperations) {
+      console.warn(
+        `Transaction has too many operations: ${operationCount} (max: ${config.maxOperations})`,
+      );
+      return next(
+        new AppError(
+          `Transaction contains ${operationCount} operations, which exceeds the maximum allowed ${config.maxOperations}`,
+          400,
+          "TOO_MANY_OPERATIONS",
+        ),
       );
     }
 
@@ -94,8 +121,6 @@ export async function feeBumpHandler(
     }
 
     const baseFeeAmount = Math.floor(config.baseFee * config.feeMultiplier);
-    // Extract operation count safely
-    const operationCount = innerTransaction.operations?.length || 0;
 
     // Use extracted utility for correct fee calculation
     const feeAmount = calculateFeeBumpFee(
